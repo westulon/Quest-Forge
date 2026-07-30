@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#1C2B21"/>
+  <!-- shield -->
+  <path d="M256 60 L392 110 Q400 280 256 452 Q112 280 120 110 Z" fill="#C9972E" stroke="#F2E6C9" stroke-width="10"/>
+  <path d="M256 100 L360 138 Q367 275 256 408 Q145 275 152 138 Z" fill="#A6402E"/>
+  <!-- running boot / swoosh -->
+  <path d="M195 300 Q195 250 240 245 L275 240 Q300 238 305 260 L310 310 Q312 330 290 335 L205 340 Q185 338 190 318 Z" fill="#F2E6C9"/>
+  <path d="M150 260 Q190 245 235 250" stroke="#F2E6C9" stroke-width="14" fill="none" stroke-linecap="round" opacity="0.85"/>
+  <path d="M140 290 Q185 278 230 282" stroke="#F2E6C9" stroke-width="12" fill="none" stroke-linecap="round" opacity="0.6"/>
+  <circle cx="330" cy="200" r="14" fill="#F2E6C9"/>
+</svg>

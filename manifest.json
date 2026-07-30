@@ -1,0 +1,16 @@
+{
+  "id": "/quest-forge-runners-path/",
+  "name": "Quest Forge: Runner's Path",
+  "short_name": "Quest Forge",
+  "description": "A 9-week fantasy RPG running adventure built on the NHS Couch to 5K plan.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#1C2B21",
+  "theme_color": "#1C2B21",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
