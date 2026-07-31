@@ -50,7 +50,8 @@ function newSaveData(name, avatarConfig) {
     completedQuestIds: [],
     lifetimeDistanceMeters: 0,
     storySeen: [],
-    settings: { gpsEnabled: false },
+    runHistory: [],
+    settings: { gpsEnabled: false, bgTheme: 'none' },
     createdAt: Date.now(),
     lastPlayedAt: Date.now()
   };
@@ -58,6 +59,9 @@ function newSaveData(name, avatarConfig) {
 function migrateSave(save) {
   // Defensive: fills in fields added after a save may have been created.
   if (!save.storySeen) save.storySeen = [];
+  if (!Array.isArray(save.runHistory)) save.runHistory = [];
+  if (!save.settings) save.settings = {};
+  if (!save.settings.bgTheme) save.settings.bgTheme = 'none';
   return save;
 }
 
@@ -65,7 +69,7 @@ function migrateSave(save) {
 const App = {
   profileId: null,
   save: null,
-  createConfig: { skinTone: SKIN_TONES[1], hairColor: HAIR_COLORS[0], hairStyle: 'short' }
+  createConfig: { skinTone: SKIN_TONES[1], hairColor: HAIR_COLORS[0], hairStyle: 'short', gender: 'girl' }
 };
 
 function getNextQuestIndex(save) {
@@ -74,13 +78,13 @@ function getNextQuestIndex(save) {
 }
 
 /* ---------------- navigation ---------------- */
-const SCREEN_IDS = ['profile-select', 'character-create', 'home', 'map', 'shop', 'hero', 'run'];
+const SCREEN_IDS = ['profile-select', 'character-create', 'home', 'map', 'shop', 'log', 'hero', 'run'];
 function showScreen(name) {
   SCREEN_IDS.forEach(id => {
     document.getElementById('screen-' + id).classList.toggle('hidden', id !== name);
   });
   const nav = document.getElementById('bottom-nav');
-  const navScreens = ['home', 'map', 'shop', 'hero'];
+  const navScreens = ['home', 'map', 'shop', 'log', 'hero'];
   nav.classList.toggle('hidden', !navScreens.includes(name));
   if (navScreens.includes(name)) {
     document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -90,6 +94,7 @@ function showScreen(name) {
   if (name === 'home') renderHome();
   if (name === 'map') renderMap();
   if (name === 'shop') renderShop();
+  if (name === 'log') renderLog();
   if (name === 'hero') renderHero();
 }
 
@@ -121,7 +126,7 @@ function showStoryModal(title, bodyText, buttonLabel, onContinue) {
   const paragraphs = bodyText.split(/\n\n+/).map(p => `<p class="story-text">${escapeHtml(p)}</p>`).join('');
   showModal(`
     <div class="story-modal">
-      <div class="eyebrow" style="color:var(--gold);opacity:1;">📜 ${escapeHtml(title)}</div>
+      <div class="eyebrow">${icon('scroll',15)} ${escapeHtml(title)}</div>
       <div class="mt-12">${paragraphs}</div>
       <button class="btn btn-primary mt-16" id="modal-story-continue">${escapeHtml(buttonLabel)}</button>
     </div>
@@ -138,7 +143,7 @@ function renderProfileList() {
   const idx = loadProfileIndex();
   const list = document.getElementById('profile-list');
   if (idx.length === 0) {
-    list.innerHTML = `<p class="text-center" style="color:var(--parchment);opacity:0.7;">No adventurers yet — create the first one below!</p>`;
+    list.innerHTML = `<p class="empty-note">No adventurers yet — create the first one below!</p>`;
     return;
   }
   list.innerHTML = idx.map(p => {
@@ -146,11 +151,13 @@ function renderProfileList() {
     if (!save) return '';
     const avatar = renderCharacterSVG(save.avatarConfig ? Object.assign({}, save.avatarConfig, { equipped: save.equipped }) : { equipped: save.equipped });
     const info = xpProgress(save.xp);
-    return `<button class="profile-card" style="width:100%;text-align:left;border:1px solid rgba(242,230,201,0.18);" data-profile-id="${p.id}">
+    const runs = (save.runHistory || []).length;
+    return `<button class="profile-card" data-profile-id="${p.id}">
       <div class="profile-avatar-sm">${avatar}</div>
       <div>
-        <div class="display" style="font-size:17px;color:var(--parchment);">${escapeHtml(save.name)}</div>
-        <div style="font-size:13px;color:var(--gold-bright);">Level ${info.level} · ${levelTitle(info.level)}</div>
+        <div class="profile-name">${escapeHtml(save.name)}</div>
+        <div class="profile-meta">Level ${info.level} · ${levelTitle(info.level)}</div>
+        <div class="t-micro on-dark-dim">${save.completedQuestIds.length} quests · ${runs} runs logged</div>
       </div>
     </button>`;
   }).join('');
@@ -164,11 +171,18 @@ function selectProfile(id) {
   if (!save) { showToast("Couldn't find that adventurer."); return; }
   App.profileId = id;
   App.save = save;
+  applyBgTheme(save.settings.bgTheme);
   showScreen('home');
 }
 
 /* ================= CHARACTER CREATE ================= */
 function renderCreatePickers() {
+  const genderWrap = document.getElementById('picker-gender');
+  const GENDER_OPTIONS = [['girl', 'Girl'], ['boy', 'Boy'], ['neither', 'Neither']];
+  genderWrap.innerHTML = GENDER_OPTIONS.map(([val, label]) =>
+    `<button class="option-pill ${App.createConfig.gender === val ? 'active' : ''}" data-pick="gender" data-value="${val}">${label}</button>`
+  ).join('');
+
   const skinWrap = document.getElementById('picker-skin');
   skinWrap.innerHTML = SKIN_TONES.map(c =>
     `<button class="swatch ${App.createConfig.skinTone === c ? 'selected' : ''}" style="background:${c};" data-pick="skinTone" data-value="${c}" aria-label="Skin tone"></button>`
@@ -181,7 +195,7 @@ function renderCreatePickers() {
 
   const styleWrap = document.getElementById('picker-hairstyle');
   styleWrap.innerHTML = HAIR_STYLES.map(s =>
-    `<button class="shop-tab ${App.createConfig.hairStyle === s ? 'active' : ''}" data-pick="hairStyle" data-value="${s}">${s[0].toUpperCase()+s.slice(1)}</button>`
+    `<button class="option-pill ${App.createConfig.hairStyle === s ? 'active' : ''}" data-pick="hairStyle" data-value="${s}">${s[0].toUpperCase()+s.slice(1)}</button>`
   ).join('');
 
   updateCreatePreview();
@@ -196,11 +210,22 @@ document.addEventListener('click', e => {
     renderCreatePickers();
   }
 });
-document.getElementById('btn-new-profile').addEventListener('click', () => {
-  App.createConfig = { skinTone: SKIN_TONES[1], hairColor: HAIR_COLORS[0], hairStyle: 'short' };
+/* Show the Back control only when there IS somewhere to go back to —
+   on very first launch there are no profiles yet. */
+function openCharacterCreate() {
   document.getElementById('input-name').value = '';
   renderCreatePickers();
+  const hasProfiles = loadProfileIndex().length > 0;
+  document.getElementById('btn-create-back').classList.toggle('hidden', !hasProfiles);
   showScreen('character-create');
+}
+document.getElementById('btn-new-profile').addEventListener('click', () => {
+  App.createConfig = { skinTone: SKIN_TONES[1], hairColor: HAIR_COLORS[0], hairStyle: 'short', gender: 'girl' };
+  openCharacterCreate();
+});
+document.getElementById('btn-create-back').addEventListener('click', () => {
+  renderProfileList();
+  showScreen('profile-select');
 });
 document.getElementById('btn-confirm-create').addEventListener('click', () => {
   const name = document.getElementById('input-name').value.trim();
@@ -209,7 +234,8 @@ document.getElementById('btn-confirm-create').addEventListener('click', () => {
   const save = newSaveData(name, {
     skinTone: App.createConfig.skinTone,
     hairColor: App.createConfig.hairColor,
-    hairStyle: App.createConfig.hairStyle
+    hairStyle: App.createConfig.hairStyle,
+    gender: App.createConfig.gender
   });
   writeSave(id, save);
   const idx = loadProfileIndex();
@@ -217,6 +243,7 @@ document.getElementById('btn-confirm-create').addEventListener('click', () => {
   saveProfileIndex(idx);
   App.profileId = id;
   App.save = save;
+  applyBgTheme('none');
   showScreen('home');
   showStoryModal(PROLOGUE.title, PROLOGUE.text, "Let's Go!", () => {
     App.save.storySeen.push('prologue');
@@ -231,25 +258,25 @@ function renderHome() {
   document.getElementById('home-name').textContent = save.name;
   const info = xpProgress(save.xp);
   document.getElementById('home-title').textContent = levelTitle(info.level);
-  document.getElementById('home-level-pill').textContent = `⭐ Lv ${info.level}`;
-  document.getElementById('home-gold-pill').textContent = `🪙 ${save.gold}`;
+  document.getElementById('home-level-pill').innerHTML = `${icon('stat_xp',15)} Lv ${info.level}`;
+  document.getElementById('home-gold-pill').innerHTML = `${icon('stat_gold',15)} ${save.gold}`;
   const pct = info.needed > 0 ? Math.round((info.current / info.needed) * 100) : 100;
   document.getElementById('home-xp-fill').style.width = pct + '%';
   document.getElementById('home-xp-label').textContent = `${info.current} / ${info.needed} XP`;
 
   const nextIdx = getNextQuestIndex(save);
   if (nextIdx === -1) {
-    document.getElementById('home-next-quest').closest('.panel-dark').classList.add('hidden');
-    document.getElementById('home-all-done-card').style.display = 'block';
+    document.getElementById('home-quest-panel').classList.add('hidden');
+    document.getElementById('home-all-done-card').classList.remove('hidden');
   } else {
-    document.getElementById('home-next-quest').closest('.panel-dark').classList.remove('hidden');
-    document.getElementById('home-all-done-card').style.display = 'none';
+    document.getElementById('home-quest-panel').classList.remove('hidden');
+    document.getElementById('home-all-done-card').classList.add('hidden');
     const q = QUESTS[nextIdx];
     document.getElementById('home-quest-title').textContent = q.title;
     document.getElementById('home-quest-region').textContent = `Week ${q.week} · ${q.region}`;
     document.getElementById('home-quest-flavor').textContent = q.flavor;
     document.getElementById('home-quest-meta').textContent =
-      `${fmtTime(q.totalSeconds)} total${q.milestone ? ' · ✨ Milestone Quest' : ''}`;
+      `${fmtTime(q.totalSeconds)} total${q.milestone ? ' · Milestone Quest' : ''}`;
   }
 }
 document.getElementById('btn-start-quest').addEventListener('click', () => {
@@ -271,17 +298,17 @@ function renderMap() {
     const quests = QUESTS.filter(q => q.week === region.week);
     const regionDone = quests.every(q => done.has(q.id));
     const isCurrentRegion = nextQuest && nextQuest.week === region.week;
-    const badgeClass = regionDone ? 'done' : (isCurrentRegion ? '' : 'locked');
-    const badgeContent = regionDone ? '✅' : (ICONS[region.icon] || '⛺');
+    const badgeClass = regionDone ? 'done' : (isCurrentRegion ? 'current' : 'locked');
+    const badgeContent = regionDone ? icon('status_done',26) : icon('region_' + region.week, 28);
 
     const questRows = quests.map(q => {
       let status = 'locked';
       if (done.has(q.id)) status = 'done';
       else if (nextQuest && q.id === nextQuest.id) status = 'current';
-      const seal = status === 'done' ? '🟢' : (status === 'current' ? '▶️' : '🔒');
+      const seal = icon(status === 'done' ? 'status_done' : (status === 'current' ? 'status_play' : 'status_locked'), 15);
       const clickable = status === 'current';
-      return `<div class="quest-chip ${status}" ${clickable ? `data-start-quest="${q.id}"` : ''} style="${clickable ? 'cursor:pointer;' : ''}">
-        <span>${escapeHtml(q.title)}${q.milestone ? ' ✨' : ''}</span>
+      return `<div class="quest-chip ${status}" ${clickable ? `data-start-quest="${q.id}"` : ''}>
+        <span>${escapeHtml(q.title)}${q.milestone ? ' ' + icon('ui_sparkle',13,'ico-milestone') : ''}</span>
         <span class="seal">${seal}</span>
       </div>`;
     }).join('');
@@ -303,23 +330,20 @@ document.addEventListener('click', e => {
     if (quest) startQuest(quest);
   }
 });
-const ICONS = {
-  village: '🏘️', woods: '🌲', hills: '🏞️', bridge: '🌉', grove: '✨',
-  foothills: '🐾', peaks: '⛰️', lair: '🐉', kingdom: '🏰'
-};
+/* Region artwork now comes from the icon registry: icon('region_' + week). */
 
 /* ================= SHOP ================= */
 const SHOP_TAB_META = {
-  weapon: { label: 'Weapon', icon: '⚔️' }, armor: { label: 'Armor', icon: '🛡️' },
-  head: { label: 'Head', icon: '🎩' }, boots: { label: 'Boots', icon: '👢' },
-  cape: { label: 'Cape', icon: '🧣' }, companion: { label: 'Companion', icon: '🐾' }
+  weapon: { label: 'Weapon' }, armor: { label: 'Armor' },
+  head: { label: 'Head' }, boots: { label: 'Boots' },
+  cape: { label: 'Cape' }, companion: { label: 'Companion' }
 };
 let shopActiveTab = 'weapon';
 function renderShop() {
-  document.getElementById('shop-gold-pill').textContent = `🪙 ${App.save.gold}`;
-  document.getElementById('shop-intro').innerHTML = `<p class="story-text" style="margin:0;font-size:13px;">${escapeHtml(SHOP_INTRO)}</p>`;
+  document.getElementById('shop-gold-pill').innerHTML = `${icon('stat_gold',15)} ${App.save.gold}`;
+  document.getElementById('shop-intro').innerHTML = `<p class="story-text on-dark">${escapeHtml(SHOP_INTRO)}</p>`;
   document.getElementById('shop-tabs').innerHTML = EQUIPMENT_SLOTS.map(slot =>
-    `<button class="shop-tab ${slot === shopActiveTab ? 'active' : ''}" data-shop-tab="${slot}">${SHOP_TAB_META[slot].icon} ${SHOP_TAB_META[slot].label}</button>`
+    `<button class="shop-tab ${slot === shopActiveTab ? 'active' : ''}" data-shop-tab="${slot}">${icon('slot_' + slot, 15)} ${SHOP_TAB_META[slot].label}</button>`
   ).join('');
   renderShopItems();
 }
@@ -334,17 +358,17 @@ function renderShopItems() {
     let rowClass = '', actionHtml = '';
     if (isEquipped) {
       rowClass = 'equipped';
-      actionHtml = `<span class="eyebrow" style="color:var(--gold);opacity:1;">Equipped</span>`;
+      actionHtml = `<span class="item-tag">Equipped</span>`;
     } else if (isOwned) {
       rowClass = 'owned';
       actionHtml = `<button class="btn btn-teal btn-sm" data-equip="${shopActiveTab}:${item.id}">Equip</button>`;
     } else {
       const afford = save.gold >= item.price;
       rowClass = afford ? '' : 'locked';
-      actionHtml = `<button class="btn ${afford ? 'btn-gold' : 'btn-ghost'} btn-sm" ${afford ? `data-buy="${shopActiveTab}:${item.id}"` : 'disabled'} style="${afford ? '' : 'color:var(--ink-text);border-color:rgba(28,43,33,0.2);'}">🪙 ${item.price}</button>`;
+      actionHtml = `<button class="btn btn-sm ${afford ? 'btn-gold' : 'btn-outline'}" ${afford ? `data-buy="${shopActiveTab}:${item.id}"` : 'disabled'}>${icon('stat_gold',14)} ${item.price}</button>`;
     }
     return `<div class="card item-row ${rowClass}">
-      <div class="item-icon">${SHOP_TAB_META[shopActiveTab].icon}</div>
+      <div class="item-icon">${icon(item.id, 30)}</div>
       <div class="item-info">
         <div class="item-name">${escapeHtml(item.name)}</div>
         <div class="item-desc">${escapeHtml(item.desc)}</div>
@@ -394,15 +418,38 @@ function renderHero() {
   document.getElementById('hero-title').textContent = `Level ${info.level} · ${levelTitle(info.level)}`;
   const questsDone = save.completedQuestIds.length;
   const nextIdx = getNextQuestIndex(save);
-  const weekLabel = nextIdx === -1 ? 'Complete! 🏆' : `Week ${QUESTS[nextIdx].week} of 9`;
+  const weekLabel = nextIdx === -1 ? 'Complete!' : `Week ${QUESTS[nextIdx].week} of 9`;
   document.getElementById('hero-stats').innerHTML = `
-    <div class="flex" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(0,0,0,0.08);"><span>Quests completed</span><strong>${questsDone} / ${QUESTS.length}</strong></div>
-    <div class="flex" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(0,0,0,0.08);"><span>Current progress</span><strong>${weekLabel}</strong></div>
-    <div class="flex" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(0,0,0,0.08);"><span>Total XP earned</span><strong>${save.xp}</strong></div>
-    <div class="flex" style="justify-content:space-between;padding:6px 0;"><span>Distance explored</span><strong>${fmtDistance(save.lifetimeDistanceMeters)}</strong></div>
+    <div class="stat-line"><span>Quests completed</span><strong>${questsDone} / ${QUESTS.length}</strong></div>
+    <div class="stat-line"><span>Current progress</span><strong>${weekLabel}</strong></div>
+    <div class="stat-line"><span>Total XP earned</span><strong>${save.xp}</strong></div>
+    <div class="stat-line"><span>Runs logged</span><strong>${(save.runHistory || []).length}</strong></div>
+    <div class="stat-line"><span>Distance explored</span><strong>${fmtDistance(save.lifetimeDistanceMeters)}</strong></div>
   `;
   document.getElementById('chk-gps').checked = !!save.settings.gpsEnabled;
+  renderBgThemePicker();
 }
+const BG_THEMES = [['none', 'Plain'], ['quatrefoil', 'Quatrefoil'], ['lattice', 'Lattice'], ['stars', 'Stars']];
+function renderBgThemePicker() {
+  const wrap = document.getElementById('picker-bgtheme');
+  const current = App.save.settings.bgTheme || 'none';
+  wrap.innerHTML = BG_THEMES.map(([val, label]) =>
+    `<button class="option-pill ${current === val ? 'active' : ''}" data-bgtheme="${val}">${label}</button>`
+  ).join('');
+}
+function applyBgTheme(theme) {
+  document.body.classList.remove('bg-quatrefoil', 'bg-lattice', 'bg-stars');
+  if (theme && theme !== 'none') document.body.classList.add('bg-' + theme);
+}
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-bgtheme]');
+  if (!btn) return;
+  const theme = btn.dataset.bgtheme;
+  App.save.settings.bgTheme = theme;
+  persistCurrentSave();
+  applyBgTheme(theme);
+  renderBgThemePicker();
+});
 document.getElementById('chk-gps').addEventListener('change', e => {
   App.save.settings.gpsEnabled = e.target.checked;
   persistCurrentSave();
@@ -417,6 +464,7 @@ document.getElementById('chk-gps').addEventListener('change', e => {
 document.getElementById('btn-switch-profile').addEventListener('click', () => {
   App.profileId = null;
   App.save = null;
+  applyBgTheme('none');
   renderProfileList();
   showScreen('profile-select');
 });
@@ -437,7 +485,7 @@ function getJournalEntries(save) {
     if (region.beacon && save.storySeen.includes('beacon-' + region.week)) {
       let text = region.beacon;
       if (region.week === 9) text += '\n\n' + FINALE_SPEECH;
-      entries.push({ title: `${region.name} — Beacon Lit`, text });
+      entries.push({ title: `${region.name} — Beacon Lit`, text, iconKey: 'ui_flame' });
     }
   });
   return entries;
@@ -445,14 +493,14 @@ function getJournalEntries(save) {
 function showJournal() {
   const entries = getJournalEntries(App.save);
   const body = entries.length === 0
-    ? `<p style="margin-top:10px;color:var(--paper-text);">Nothing written yet — start your first quest to begin the story.</p>`
+    ? `<p class="t-small muted mt-12">Nothing written yet — start your first quest to begin the story.</p>`
     : `<div class="journal-list mt-12">${entries.map(e => `
         <div class="journal-entry">
-          <div class="eyebrow" style="color:var(--gold);opacity:1;">${escapeHtml(e.title)}</div>
+          <div class="eyebrow">${e.iconKey ? icon(e.iconKey,14) + ' ' : ''}${escapeHtml(e.title)}</div>
           ${e.text.split(/\n\n+/).map(p => `<p class="story-text">${escapeHtml(p)}</p>`).join('')}
         </div>`).join('')}</div>`;
   showModal(`
-    <div class="display" style="font-size:20px;color:var(--ink-text);">📖 Guild Journal</div>
+    <div class="modal-title">${icon('ui_book',20)} Guild Journal</div>
     ${body}
     <button class="btn btn-primary mt-16" id="modal-journal-close">Close</button>
   `, () => document.getElementById('modal-journal-close').addEventListener('click', closeModal));
@@ -515,6 +563,7 @@ document.addEventListener('visibilitychange', () => {
 let gpsWatchId = null;
 let lastGpsPos = null;
 let sessionDistanceMeters = 0;
+let sessionRoute = [];
 function haversine(lat1, lon1, lat2, lon2) {
   const R = 6371000;
   const toRad = d => d * Math.PI / 180;
@@ -524,15 +573,23 @@ function haversine(lat1, lon1, lat2, lon2) {
 }
 function startGpsTracking() {
   if (!navigator.geolocation) return;
-  sessionDistanceMeters = 0; lastGpsPos = null;
-  document.getElementById('run-distance').style.display = 'block';
+  sessionDistanceMeters = 0; lastGpsPos = null; sessionRoute = [];
+  document.getElementById('run-route-wrap').classList.remove('hidden');
   updateDistanceDisplay();
   gpsWatchId = navigator.geolocation.watchPosition(pos => {
     const { latitude, longitude, accuracy } = pos.coords;
     if (accuracy && accuracy > 30) return;
+    let moved = null;
     if (lastGpsPos) {
-      const d = haversine(lastGpsPos.lat, lastGpsPos.lon, latitude, longitude);
-      if (d > 1 && d < 100) sessionDistanceMeters += d;
+      moved = haversine(lastGpsPos.lat, lastGpsPos.lon, latitude, longitude);
+      // ignore sub-metre jitter and impossible jumps (tunnels, signal bounce)
+      if (moved > 1 && moved < 100) sessionDistanceMeters += moved;
+    }
+    if (!lastGpsPos || (moved != null && moved > 2 && moved < 100)) {
+      sessionRoute.push([latitude, longitude]);
+      // keep the in-memory trace bounded on very long sessions
+      if (sessionRoute.length > 4000) sessionRoute = simplifyRoute(sessionRoute, 2000);
+      drawLiveRoute();
     }
     lastGpsPos = { lat: latitude, lon: longitude };
     updateDistanceDisplay();
@@ -542,8 +599,28 @@ function stopGpsTracking() {
   if (gpsWatchId !== null && navigator.geolocation) navigator.geolocation.clearWatch(gpsWatchId);
   gpsWatchId = null;
 }
+/* Draw a route into an <svg>. Shared by the live trace, history thumbnails
+   and the run-detail view, so they always look consistent. */
+function paintRoute(svgEl, points, opts) {
+  if (!svgEl) return false;
+  opts = opts || {};
+  const vw = opts.vw || 240, vh = opts.vh || 130;
+  svgEl.setAttribute('viewBox', `0 0 ${vw} ${vh}`);
+  const geo = routeToSvgPath(points, vw, vh, opts.pad == null ? 10 : opts.pad);
+  if (!geo) { svgEl.innerHTML = ''; return false; }
+  const dot = opts.dots === false ? '' :
+    `<circle class="route-start" cx="${geo.start[0].toFixed(1)}" cy="${geo.start[1].toFixed(1)}" r="${opts.dotR || 4}"/>
+     <circle class="route-head" cx="${geo.end[0].toFixed(1)}" cy="${geo.end[1].toFixed(1)}" r="${opts.dotR || 4}"/>`;
+  svgEl.innerHTML = `<path class="route-line" d="${geo.d}"/>${dot}`;
+  return true;
+}
+
+function drawLiveRoute() {
+  paintRoute(document.getElementById('run-route-svg'), sessionRoute, { vw: 240, vh: 130 });
+}
+
 function updateDistanceDisplay() {
-  document.getElementById('run-distance').textContent = `🧭 ${fmtDistance(sessionDistanceMeters)} explored`;
+  document.getElementById('run-distance').innerHTML = `${icon('stat_distance',15)} ${fmtDistance(sessionDistanceMeters)} explored`;
 }
 
 /* ================= RUN ENGINE ================= */
@@ -561,11 +638,14 @@ const RunEngine = {
   start(quest) {
     this.active = true;
     this.quest = quest;
+    this.startedAt = Date.now();
+    this.pausedTotalMs = 0;
+    this.pauseStartedAt = null;
     this.phaseIndex = 0;
     this.elapsedBeforePhase = 0;
     this.paused = false;
     document.getElementById('run-quest-title').textContent = `${quest.region} — ${quest.title}`;
-    document.getElementById('run-distance').style.display = 'none';
+    document.getElementById('run-route-wrap').classList.add('hidden');
     showScreen('run');
     this._beginPhase();
     if (App.save.settings.gpsEnabled) startGpsTracking();
@@ -614,10 +694,13 @@ const RunEngine = {
     document.getElementById('run-nextup').textContent = nextPhase ? `Then: ${PHASE_LABELS[nextPhase.type]}` : 'Final stretch!';
     const overallElapsed = this.elapsedBeforePhase + (phase.duration - remainingSec);
     document.getElementById('run-overall-fill').style.width = Math.min(100, (overallElapsed / this.quest.totalSeconds) * 100) + '%';
+    document.getElementById('run-elapsed').textContent =
+      `${fmtTime(overallElapsed)} of ${fmtTime(this.quest.totalSeconds)}`;
   },
   pause() {
     if (this.paused || !this.active) return;
     this.paused = true;
+    this.pauseStartedAt = Date.now();
     this.pausedRemainingMs = this.phaseEndAt - Date.now();
     clearInterval(this.intervalId);
     this._setPauseButton(true);
@@ -625,13 +708,16 @@ const RunEngine = {
   resume() {
     if (!this.paused) return;
     this.paused = false;
+    if (this.pauseStartedAt) { this.pausedTotalMs += Date.now() - this.pauseStartedAt; this.pauseStartedAt = null; }
     this.phaseEndAt = Date.now() + this.pausedRemainingMs;
     this.intervalId = setInterval(() => this.tick(), 250);
     this._setPauseButton(false);
     requestWakeLock();
   },
   _setPauseButton(isPaused) {
-    document.getElementById('btn-pause-run').textContent = isPaused ? '▶ Resume' : '⏸ Pause';
+    document.getElementById('btn-pause-run').innerHTML = isPaused
+      ? `${icon('status_play',18)} Resume`
+      : `${icon('ui_pause',18)} Pause`;
   },
   _stopAll() {
     this.active = false;
@@ -658,6 +744,29 @@ const RunEngine = {
     const afterLevel = xpProgress(save.xp).level;
     const leveledUp = afterLevel > beforeLevel;
 
+    // ---- log this run ----
+    const elapsedSec = Math.max(
+      1,
+      Math.round((Date.now() - (this.startedAt || Date.now()) - (this.pausedTotalMs || 0)) / 1000)
+    );
+    const record = {
+      id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+      questId: quest.id,
+      questTitle: quest.title,
+      week: quest.week,
+      region: quest.region,
+      completedAt: Date.now(),
+      elapsedSec,
+      plannedSec: quest.totalSeconds,
+      runSec: quest.runSeconds,
+      distanceM: Math.round(distanceThisRun),
+      route: compactRoute(simplifyRoute(sessionRoute, 300)),
+      xp: rewards.xp,
+      gold: rewards.gold
+    };
+    save.runHistory.unshift(record);
+    const prs = recordsAchievedBy(save.runHistory, record.id);
+
     // Beacon-lit: true the moment every quest in this quest's region is done.
     const region = REGIONS.find(r => r.week === quest.week);
     const regionQuestIds = QUESTS.filter(q => q.week === quest.week).map(q => q.id);
@@ -674,7 +783,7 @@ const RunEngine = {
     playCompleteFanfare();
     vibrate([200, 100, 200, 100, 400]);
     showScreen('home');
-    showQuestCompleteModal(quest, rewards, leveledUp, afterLevel, distanceThisRun, beaconText);
+    showQuestCompleteModal(quest, rewards, leveledUp, afterLevel, distanceThisRun, beaconText, prs, record);
   }
 };
 document.getElementById('btn-pause-run').addEventListener('click', () => {
@@ -683,10 +792,10 @@ document.getElementById('btn-pause-run').addEventListener('click', () => {
 document.getElementById('btn-end-run').addEventListener('click', () => {
   RunEngine.pause();
   showModal(`
-    <h3 style="color:var(--ink-text);font-size:20px;">Leave this quest?</h3>
-    <p style="color:var(--paper-text);font-size:14px;">Your progress on this run won't be saved, but you can jump back in anytime.</p>
+    <div class="modal-title">Leave this quest?</div>
+    <p class="t-small mt-8">Your progress on this run won't be saved, but you can jump back in anytime.</p>
     <div class="flex gap-8 mt-16">
-      <button class="btn btn-ghost grow" id="modal-keep-going" style="color:var(--ink-text);border-color:rgba(28,43,33,0.3);">Keep Going</button>
+      <button class="btn btn-outline grow" id="modal-keep-going">Keep Going</button>
       <button class="btn btn-primary grow" id="modal-end-quest">End Quest</button>
     </div>
   `, () => {
@@ -707,44 +816,225 @@ function startQuest(quest) {
   }
 }
 
-function showQuestCompleteModal(quest, rewards, leveledUp, newLevel, distanceMeters, beaconText) {
+function showQuestCompleteModal(quest, rewards, leveledUp, newLevel, distanceMeters, beaconText, prs, record) {
   const isFinale = quest.id === 'w9r3';
+
   const milestoneHtml = quest.milestone
-    ? `<div class="mt-8" style="background:rgba(201,151,46,0.18);border:1px solid var(--gold);border-radius:12px;padding:8px;font-weight:800;color:#7a5a10;">✨ Milestone: ${escapeHtml(quest.milestone)}</div>`
+    ? `<div class="milestone-note">${icon('ui_sparkle',15)} Milestone: ${escapeHtml(quest.milestone)}</div>`
     : '';
+
   const levelUpHtml = leveledUp
-    ? `<div class="mt-12" style="font-family:var(--font-display);font-size:22px;color:var(--ember);">🎉 LEVEL UP! Level ${newLevel}</div>
-       <div style="font-size:14px;color:var(--paper-text);">${escapeHtml(levelTitle(newLevel))}</div>`
+    ? `<div class="levelup-note">${icon('ui_sparkle',20)} LEVEL UP! Level ${newLevel}</div>
+       <p class="t-small muted">${escapeHtml(levelTitle(newLevel))}</p>`
     : '';
+
   const distanceHtml = distanceMeters > 0
-    ? `<div style="font-size:13px;color:var(--paper-text);opacity:0.8;margin-top:6px;">🧭 You explored ${fmtDistance(distanceMeters)} on this quest!</div>`
+    ? `<p class="t-small muted mt-8">${icon('stat_distance',14)} You explored ${fmtDistance(distanceMeters)} on this quest!</p>`
     : '';
+
   const beaconHtml = beaconText
-    ? `<p class="story-text mt-12" style="text-align:left;">${escapeHtml(beaconText)}</p>`
+    ? `<div class="beacon-note">${icon('ui_flame', 22, 'ico-flame')}<p class="story-text">${escapeHtml(beaconText)}</p></div>`
     : '';
+
+  // Personal bests earned by this run — the "you beat yourself" moment.
+  const prHtml = (prs && prs.length)
+    ? `<div class="pr-note">${prs.map(p =>
+         `${MEDALS[p.rank]} — ${escapeHtml(p.label)}: ${escapeHtml(p.formatted)}`
+       ).join('<br>')}</div>`
+    : '';
+
+  const routeHtml = (record && record.route && record.route.length > 1)
+    ? `<svg class="detail-route mt-12" id="complete-route" viewBox="0 0 240 130"></svg>`
+    : '';
+
   const finaleHtml = isFinale
-    ? `<div class="mt-12" style="font-family:var(--font-display);font-size:20px;color:var(--gold);">🏆 WINDRUNNER OF THE REALM 🏆</div>
-       <p class="story-text mt-8" style="text-align:left;">${escapeHtml(FINALE_SPEECH)}</p>
-       <div class="stat-pill mt-8" style="background:rgba(92,122,79,0.15);color:#3E5432;border-color:rgba(92,122,79,0.3);display:inline-flex;">27 / 27 Quests Complete</div>`
+    ? `<div class="finale-note">${icon('trophy',22)} WINDRUNNER OF THE REALM ${icon('trophy',22)}</div>
+       <p class="story-text mt-8">${escapeHtml(FINALE_SPEECH)}</p>
+       <div class="stat-pill mt-8">27 / 27 Quests Complete</div>`
     : '';
+
   showModal(`
-    <div class="display" style="font-size:24px;color:var(--ink-text);">Quest Complete!</div>
-    <div style="font-size:15px;color:var(--paper-text);font-weight:700;margin-top:4px;">${escapeHtml(quest.title)}</div>
-    <div class="flex gap-12 mt-16" style="justify-content:center;">
-      <div class="stat-pill" style="background:rgba(92,122,79,0.15);color:#3E5432;border-color:rgba(92,122,79,0.3);">+${rewards.xp} XP</div>
-      <div class="stat-pill gold" style="background:rgba(201,151,46,0.15);border-color:rgba(201,151,46,0.3);">+${rewards.gold} 🪙</div>
+    <div class="modal-title">Quest Complete!</div>
+    <div class="modal-sub">${escapeHtml(quest.title)}</div>
+    <div class="reward-row">
+      <span class="reward-pill reward-pill--xp"><span data-countup="${rewards.xp}">0</span> XP</span>
+      <span class="reward-pill reward-pill--gold">${icon('stat_gold',15)} <span data-countup="${rewards.gold}">0</span></span>
     </div>
     ${distanceHtml}
+    ${routeHtml}
+    ${prHtml}
     ${milestoneHtml}
     ${beaconHtml}
     ${levelUpHtml}
     ${finaleHtml}
     <button class="btn btn-primary mt-20" id="modal-continue">Continue</button>
   `, () => {
+    runCountUps();
+    if (record && record.route && record.route.length > 1) {
+      paintRoute(document.getElementById('complete-route'), record.route, { vw: 240, vh: 130 });
+    }
     if (leveledUp) setTimeout(() => { playLevelUpFanfare(); vibrate([100, 60, 100, 60, 100, 60, 300]); }, 400);
     document.getElementById('modal-continue').addEventListener('click', () => { closeModal(); renderHome(); });
   });
 }
+
+/* Numbers that tick up read as "earned" rather than "assigned" — worth the
+   few lines for the audience this is built for. */
+function runCountUps() {
+  document.querySelectorAll('[data-countup]').forEach(el => {
+    const target = parseInt(el.dataset.countup, 10) || 0;
+    if (target <= 0) { el.textContent = String(target); return; }
+    const durationMs = 700;
+    const started = Date.now();
+    const step = () => {
+      const t = Math.min(1, (Date.now() - started) / durationMs);
+      const eased = 1 - Math.pow(1 - t, 3);
+      el.textContent = String(Math.round(target * eased));
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+/* ================= RUN LOG ================= */
+function renderLog() {
+  const hist = App.save.runHistory || [];
+  const countEl = document.getElementById('log-count-pill');
+  countEl.textContent = hist.length === 1 ? '1 run' : `${hist.length} runs`;
+
+  const sum = summarise(hist);
+  document.getElementById('log-summary').innerHTML = `
+    <div class="summary-grid">
+      <div class="summary-cell">
+        <div class="summary-value">${sum.runs}</div>
+        <div class="summary-label">Runs</div>
+      </div>
+      <div class="summary-cell">
+        <div class="summary-value">${sum.distanceM >= 1000 ? (sum.distanceM/1000).toFixed(1) : Math.round(sum.distanceM)}</div>
+        <div class="summary-label">${sum.distanceM >= 1000 ? 'km total' : 'm total'}</div>
+      </div>
+      <div class="summary-cell">
+        <div class="summary-value">${Math.round(sum.runSec / 60)}</div>
+        <div class="summary-label">Min running</div>
+      </div>
+    </div>`;
+
+  document.getElementById('log-records').innerHTML = computeRecords(hist).map(cat => {
+    const rows = cat.entries.length
+      ? cat.entries.map(e => `
+          <div class="record-row">
+            <span class="medal medal-${e.rank}">${e.rank}</span>
+            <span class="record-value">${escapeHtml(e.formatted)}</span>
+            <span class="record-when">${escapeHtml(fmtDateShort(e.run.completedAt))}</span>
+          </div>`).join('')
+      : `<div class="record-empty">Not set yet — get out there!</div>`;
+    return `<div class="record-card">
+      <div class="record-head">${icon(cat.iconKey, 17)} ${escapeHtml(cat.label)}</div>
+      ${rows}
+    </div>`;
+  }).join('');
+
+  const histEl = document.getElementById('log-history');
+  if (!hist.length) {
+    histEl.innerHTML = `<p class="empty-note">No runs logged yet. Finish a quest and it'll appear here.</p>`;
+    return;
+  }
+  histEl.innerHTML = hist.map(r => {
+    const hasRoute = r.route && r.route.length > 1;
+    const thumb = hasRoute
+      ? `<svg class="history-thumb" data-route-for="${r.id}" viewBox="0 0 56 56"></svg>`
+      : `<div class="history-thumb history-thumb-empty">${icon('status_done', 20)}</div>`;
+    const pace = runPace(r);
+    const bits = [fmtDuration(r.elapsedSec)];
+    if (r.distanceM > 0) bits.push(fmtDistance(r.distanceM));
+    if (pace) bits.push(fmtPace(pace));
+    return `<button class="history-row" data-run-id="${r.id}">
+      ${thumb}
+      <div class="history-info">
+        <div class="history-title">${escapeHtml(r.questTitle)}</div>
+        <div class="history-meta">${escapeHtml(fmtDateShort(r.completedAt))} · Week ${r.week}</div>
+        <div class="history-stats">${escapeHtml(bits.join(' · '))}</div>
+      </div>
+    </button>`;
+  }).join('');
+
+  // paint thumbnails after the markup exists
+  hist.forEach(r => {
+    if (r.route && r.route.length > 1) {
+      const el = histEl.querySelector(`[data-route-for="${r.id}"]`);
+      paintRoute(el, r.route, { vw: 56, vh: 56, pad: 6, dots: false });
+    }
+  });
+}
+
+function showRunDetail(runId) {
+  const r = (App.save.runHistory || []).find(x => x.id === runId);
+  if (!r) return;
+  const pace = runPace(r);
+  const hasRoute = r.route && r.route.length > 1;
+  showModal(`
+    <div class="modal-title">${escapeHtml(r.questTitle)}</div>
+    <div class="modal-sub">${escapeHtml(r.region)} · Week ${r.week}</div>
+    <p class="t-small muted mt-4">${escapeHtml(fmtDateShort(r.completedAt))}</p>
+    ${hasRoute
+      ? `<svg class="detail-route mt-12" id="detail-route" viewBox="0 0 240 200"></svg>`
+      : `<p class="t-small muted mt-12">No route recorded for this run — GPS was off, or there wasn't a signal.</p>`}
+    <div class="detail-grid mt-12">
+      <div class="detail-cell"><div class="detail-value">${fmtDuration(r.elapsedSec)}</div><div class="detail-label">Time</div></div>
+      <div class="detail-cell"><div class="detail-value">${r.distanceM > 0 ? fmtDistance(r.distanceM) : '—'}</div><div class="detail-label">Distance</div></div>
+      <div class="detail-cell"><div class="detail-value">${pace ? fmtPace(pace).replace(' /km','') : '—'}</div><div class="detail-label">Pace /km</div></div>
+      <div class="detail-cell"><div class="detail-value">${r.xp}</div><div class="detail-label">XP earned</div></div>
+    </div>
+    <button class="btn btn-primary mt-16" id="modal-detail-close">Close</button>
+  `, () => {
+    if (hasRoute) paintRoute(document.getElementById('detail-route'), r.route, { vw: 240, vh: 200, pad: 14, dotR: 5 });
+    document.getElementById('modal-detail-close').addEventListener('click', closeModal);
+  });
+}
+document.addEventListener('click', e => {
+  const row = e.target.closest('[data-run-id]');
+  if (row) showRunDetail(row.dataset.runId);
+});
+
+/* ================= DELETE ADVENTURER ================= */
+function deleteCurrentProfile() {
+  const id = App.profileId;
+  const name = App.save ? App.save.name : 'this adventurer';
+  if (!id) return;
+  localStorage.removeItem(STORAGE_PREFIX + 'save_' + id);
+  saveProfileIndex(loadProfileIndex().filter(p => p.id !== id));
+  App.profileId = null;
+  App.save = null;
+  applyBgTheme('none');
+  showToast(`${name} has been deleted.`);
+  if (loadProfileIndex().length === 0) {
+    App.createConfig = { skinTone: SKIN_TONES[1], hairColor: HAIR_COLORS[0], hairStyle: 'short', gender: 'girl' };
+    openCharacterCreate();
+  } else {
+    renderProfileList();
+    showScreen('profile-select');
+  }
+}
+document.getElementById('btn-delete-profile').addEventListener('click', () => {
+  const name = App.save ? App.save.name : 'this adventurer';
+  const runs = (App.save.runHistory || []).length;
+  const quests = App.save.completedQuestIds.length;
+  showModal(`
+    <div class="modal-title">Delete ${escapeHtml(name)}?</div>
+    <p class="t-small mt-8">This erases ${quests} completed quest${quests === 1 ? '' : 's'}, ${runs} logged run${runs === 1 ? '' : 's'}, all gear and all records.</p>
+    <p class="t-small mt-8"><strong>This cannot be undone.</strong></p>
+    <div class="flex gap-8 mt-16">
+      <button class="btn btn-outline grow" id="modal-cancel-delete">Keep</button>
+      <button class="btn btn-danger grow" id="modal-confirm-delete">Delete</button>
+    </div>
+  `, () => {
+    document.getElementById('modal-cancel-delete').addEventListener('click', closeModal);
+    document.getElementById('modal-confirm-delete').addEventListener('click', () => {
+      closeModal();
+      deleteCurrentProfile();
+    });
+  });
+});
 
 /* ================= BOTTOM NAV ================= */
 document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -752,12 +1042,20 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
 });
 
 /* ================= INIT ================= */
+function hydrateIcons(root) {
+  (root || document).querySelectorAll('[data-icon]').forEach(el => {
+    const key = el.dataset.icon;
+    const size = parseInt(el.dataset.iconSize || '', 10) || 20;
+    el.innerHTML = icon(key, size);
+  });
+}
+
 function init() {
+  hydrateIcons();
   const idx = loadProfileIndex();
   if (idx.length === 0) {
-    App.createConfig = { skinTone: SKIN_TONES[1], hairColor: HAIR_COLORS[0], hairStyle: 'short' };
-    renderCreatePickers();
-    showScreen('character-create');
+    App.createConfig = { skinTone: SKIN_TONES[1], hairColor: HAIR_COLORS[0], hairStyle: 'short', gender: 'girl' };
+    openCharacterCreate();
   } else {
     renderProfileList();
     showScreen('profile-select');

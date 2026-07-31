@@ -153,23 +153,65 @@ function renderHead(skin) {
           <circle cx="110" cy="75" r="44" fill="${skin}" stroke="${INK}" stroke-width="4"/>`;
 }
 
-function renderHair(color, style, headgearId) {
-  const hideForHelm = tierNum(headgearId) === 3; // full helm covers hair
-  if (hideForHelm) return '';
-  const dome = `<path d="M62 78 A48 48 0 1 1 158 78 Q150 40 110 42 Q70 40 62 78 Z" fill="${color}" stroke="${INK}" stroke-width="4" stroke-linejoin="round"/>`;
+/* Hair is drawn in TWO passes, which is the fix for it reading as pasted on:
+   - renderHairBack: the bulk, drawn BEHIND the head and cut as a crescent, so
+     only a rim shows around the skull and down beside the jaw. This is what
+     creates a silhouette rather than a decal.
+   - renderHairFront: a shallow fringe on the forehead only, drawn over the
+     head but stopping well clear of the eyes.
+   Previously it was one shape stacked on top of the face. */
+function renderHairBack(color, style, headgearId) {
+  if (tierNum(headgearId) === 3) return '';   // full helm covers everything
+  const shadow = shadeColor(color, -18);
+
+  // Outer edge sits ~15px proud of the skull; inner edge tucks inside it, so
+  // the join between hair and head can never show as a seam.
+  const rim = `<path d="M52 112 C48 40,76 12,110 12 C144 12,172 40,168 112
+                        C164 119,154 119,152 108 C154 58,133 38,110 38
+                        C87 38,66 58,68 108 C66 119,56 119,52 112 Z"
+        fill="${color}" stroke="${INK}" stroke-width="4" stroke-linejoin="round"/>`;
+
+  let fall = '';
   if (style === 'long') {
-    return `${dome}
-      <path d="M60 70 Q52 120 58 165 Q68 168 70 150 Q64 110 68 72 Z" fill="${color}" stroke="${INK}" stroke-width="3.5" stroke-linejoin="round"/>
-      <path d="M160 70 Q168 120 162 165 Q152 168 150 150 Q156 110 152 72 Z" fill="${color}" stroke="${INK}" stroke-width="3.5" stroke-linejoin="round"/>`;
+    fall = `
+      <path d="M62 74 C52 112,50 150,57 178 C65 184,74 179,71 168 C64 138,64 104,74 78 Z"
+            fill="${color}" stroke="${INK}" stroke-width="3.5" stroke-linejoin="round"/>
+      <path d="M158 74 C168 112,170 150,163 178 C155 184,146 179,149 168 C156 138,156 104,146 78 Z"
+            fill="${color}" stroke="${INK}" stroke-width="3.5" stroke-linejoin="round"/>
+      <path d="M59 102 C54 126,54 152,59 170" fill="none" stroke="${shadow}" stroke-width="2.2" opacity="0.45" stroke-linecap="round"/>
+      <path d="M161 102 C166 126,166 152,161 170" fill="none" stroke="${shadow}" stroke-width="2.2" opacity="0.45" stroke-linecap="round"/>`;
+  } else if (style === 'braids') {
+    fall = `
+      <path d="M62 76 C54 104,58 128,54 148 C53 161,57 170,64 174 C71 170,72 160,69 150 C73 128,70 104,75 80 Z"
+            fill="${color}" stroke="${INK}" stroke-width="3.5" stroke-linejoin="round"/>
+      <path d="M158 76 C166 104,162 128,166 148 C167 161,163 170,156 174 C149 170,148 160,151 150 C147 128,150 104,145 80 Z"
+            fill="${color}" stroke="${INK}" stroke-width="3.5" stroke-linejoin="round"/>
+      <path d="M56 108 L68 110 M54 128 L67 129 M57 148 L66 149"
+            stroke="${INK}" stroke-width="2" opacity="0.45" stroke-linecap="round"/>
+      <path d="M164 108 L152 110 M166 128 L153 129 M163 148 L154 149"
+            stroke="${INK}" stroke-width="2" opacity="0.45" stroke-linecap="round"/>`;
   }
-  if (style === 'braids') {
-    return `${dome}
-      <path d="M64 74 Q56 100 62 128 Q70 130 71 124 Q73 130 68 132 Q60 108 68 76 Z" fill="${color}" stroke="${INK}" stroke-width="3" stroke-linejoin="round"/>
-      <path d="M156 74 Q164 100 158 128 Q150 130 149 124 Q147 130 152 132 Q160 108 152 76 Z" fill="${color}" stroke="${INK}" stroke-width="3" stroke-linejoin="round"/>
-      <path d="M60 90 L74 92 M58 104 L72 106 M60 118 L70 119" stroke="${INK}" stroke-width="2" opacity="0.4"/>
-      <path d="M160 90 L146 92 M162 104 L148 106 M160 118 L150 119" stroke="${INK}" stroke-width="2" opacity="0.4"/>`;
-  }
-  return dome; // short
+  return fall + rim;
+}
+
+function renderHairFront(color, style, headgearId) {
+  if (tierNum(headgearId) === 3) return '';
+  const shadow = shadeColor(color, -20);
+  // Deliberately asymmetric: a perfectly mirrored fringe was part of what made
+  // the old head look like a sticker. Bottom edge stays above y=62 and the
+  // eyes sit at y=80, so it never crowds the face.
+  return `<path d="M70 58 C72 34,90 25,112 27 C134 29,149 41,149 60
+                   C142 45,126 39,110 43 C94 47,78 50,70 58 Z"
+        fill="${color}" stroke="${INK}" stroke-width="4" stroke-linejoin="round"/>
+    <path d="M97 30 C91 37,87 46,88 54" fill="none" stroke="${shadow}" stroke-width="2.5" opacity="0.5" stroke-linecap="round"/>
+    <path d="M125 31 C131 37,134 45,132 53" fill="none" stroke="${shadow}" stroke-width="2.5" opacity="0.45" stroke-linecap="round"/>`;
+}
+
+function shadeColor(hex, amt) {
+  const n = parseInt(hex.replace('#',''), 16);
+  let r = (n >> 16) + amt, g = ((n >> 8) & 0xff) + amt, b = (n & 0xff) + amt;
+  r = Math.max(0, Math.min(255, r)); g = Math.max(0, Math.min(255, g)); b = Math.max(0, Math.min(255, b));
+  return '#' + (0x1000000 + r * 0x10000 + g * 0x100 + b).toString(16).slice(1);
 }
 
 function renderHeadgear(id) {
@@ -212,8 +254,9 @@ function renderCharacterSVG(config, opts) {
     ${renderArms(skin)}
     ${renderBody(eq.armor)}
     ${renderWeapon(eq.weapon)}
+    ${renderHairBack(hairColor, hairStyle, eq.head)}
     ${renderHead(skin)}
-    ${renderHair(hairColor, hairStyle, eq.head)}
+    ${renderHairFront(hairColor, hairStyle, eq.head)}
     ${renderHeadgear(eq.head)}
     ${renderFace(skin)}
   </svg>`;
