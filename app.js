@@ -86,6 +86,7 @@ function showScreen(name) {
   const nav = document.getElementById('bottom-nav');
   const navScreens = ['home', 'map', 'shop', 'log', 'hero'];
   nav.classList.toggle('hidden', !navScreens.includes(name));
+  syncNavSpace();
   if (navScreens.includes(name)) {
     document.querySelectorAll('.nav-btn').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.screen === name);
@@ -173,6 +174,7 @@ function selectProfile(id) {
   App.save = save;
   applyBgTheme(save.settings.bgTheme);
   showScreen('home');
+  offerRunResume();
 }
 
 /* ================= CHARACTER CREATE ================= */
@@ -545,19 +547,135 @@ function playCompleteFanfare() { beep(523, 0, 0.15); beep(659, 0.15, 0.15); beep
 function playLevelUpFanfare() { beep(523, 0, 0.12); beep(659, 0.12, 0.12); beep(784, 0.24, 0.12); beep(1046, 0.36, 0.12); beep(1318, 0.48, 0.5); }
 function vibrate(pattern) { if (navigator.vibrate) { try { navigator.vibrate(pattern); } catch (e) {} } }
 
-/* ================= WAKE LOCK ================= */
-let wakeLockSentinel = null;
-async function requestWakeLock() {
-  try {
-    if ('wakeLock' in navigator) wakeLockSentinel = await navigator.wakeLock.request('screen');
-  } catch (e) { /* not critical */ }
-}
-function releaseWakeLock() {
-  if (wakeLockSentinel) { wakeLockSentinel.release().catch(() => {}); wakeLockSentinel = null; }
-}
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && RunEngine.active && !RunEngine.paused) requestWakeLock();
-});
+/* ================= KEEPING THE SCREEN ON =================
+   Two mechanisms, in order of preference:
+
+   1. The Screen Wake Lock API. Supported by Chrome on Android and Safari
+      16.4+, which covers essentially every phone this will run on.
+
+   2. A muted, looping, inline video. This is the old trick — a device won't
+      sleep while it believes video is playing — and it covers older phones
+      that predate the proper API. The clip is a 32x32 black square, one
+      second long, roughly 1.5KB, sitting invisibly off-screen.
+
+   The important part is not acquiring the lock; it's KEEPING it. The OS
+   drops a wake lock whenever the page is hidden — during a notification
+   shade pull-down, an incoming call, an app switch — and does not give it
+   back on its own. Without re-acquisition the screen starts sleeping again
+   partway through a run, which is exactly what it looks like from the
+   outside when a run "gets cancelled".
+   ============================================================ */
+
+const WakeLock = {
+  sentinel: null,
+  video: null,
+  wanted: false,
+  method: 'none',      // 'api' | 'video' | 'none'
+
+  supported() {
+    return ('wakeLock' in navigator) || !!document.createElement('video').canPlayType;
+  },
+
+  async enable() {
+    this.wanted = true;
+    await this._acquire();
+  },
+
+  disable() {
+    this.wanted = false;
+    this._releaseApi();
+    this._stopVideo();
+    this.method = 'none';
+  },
+
+  async _acquire() {
+    if (!this.wanted) return;
+    // The API can reject even when present — a hidden page or a low battery
+    // will both refuse — so the video fallback backs it up rather than
+    // replacing it.
+    if ('wakeLock' in navigator && document.visibilityState === 'visible') {
+      try {
+        this.sentinel = await navigator.wakeLock.request('screen');
+        this.method = 'api';
+        // Fired when the OS takes the lock away. Re-acquire on return.
+        this.sentinel.addEventListener('release', () => {
+          this.sentinel = null;
+          if (this.wanted && document.visibilityState === 'visible') {
+            this._acquire();
+          }
+        });
+        this._stopVideo();   // don't burn battery on both at once
+        return;
+      } catch (e) {
+        this.sentinel = null;
+      }
+    }
+    this._startVideo();
+  },
+
+  _releaseApi() {
+    if (this.sentinel) {
+      const s = this.sentinel;
+      this.sentinel = null;
+      try {
+        const p = s.release();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      } catch (e) { /* already released */ }
+    }
+  },
+
+  _startVideo() {
+    // play() returns a promise in browsers but not in every environment, so
+    // never assume it's thenable.
+    const safePlay = (el) => {
+      try {
+        const p = el.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      } catch (e) { /* autoplay blocked or unsupported */ }
+    };
+    if (this.video) {
+      safePlay(this.video);
+      this.method = 'video';
+      return;
+    }
+    try {
+      const v = document.createElement('video');
+      v.setAttribute('playsinline', '');
+      v.setAttribute('muted', '');
+      v.setAttribute('loop', '');
+      v.setAttribute('title', 'Keeps the screen awake during a run');
+      v.muted = true;
+      v.loop = true;
+      v.className = 'nosleep-video';
+      v.innerHTML =
+        '<source src="data:video/webm;base64,GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAHjEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHYTbuMU6uEElTDZ1OsggEeTbuMU6uEHFO7a1OsggHN7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsirXsYMPQkBNgI1MYXZmNjAuMTYuMTAwV0GNTGF2ZjYwLjE2LjEwMESJiECPQAAAAAAAFlSua8GuAQAAAAAAADjXgQFzxYgJibX+FlJKZ5yBACK1nIN1bmSIgQCGhVZfVlA4g4EBI+ODhDuaygDgibCBILqBIJqBAhJUw2f8c3OgY8CAZ8iaRaOHRU5DT0RFUkSHjUxhdmY2MC4xNi4xMDBzc9ZjwItjxYgJibX+FlJKZ2fIoUWjh0VOQ09ERVJEh5RMYXZjNjAuMzEuMTAyIGxpYnZweGfIoUWjiERVUkFUSU9ORIeTMDA6MDA6MDEuMDAwMDAwMDAwAB9DtnWp54EAo6SBAACAMAIAnQEqIAAgAABHCIWFiJmEiAICAAeQ88nA/v+rUIAcU7trkbuPs4EAt4r3gQHxggGf8IED" type="video/webm">' +
+        '<source src="data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMPbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAA+gAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAjl0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAA+gAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAACAAAAAgAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAPoAAAAAAABAAAAAAGxbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAQABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABXG1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAARxzdGJsAAAAuHN0c2QAAAAAAAAAAQAAAKhhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAACAAIABIAAAASAAAAAAAAAABFUxhdmM2MC4zMS4xMDIgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAALmF2Y0MBQsAe/+EAFmdCwB7ZCWwEQAAAAwBAAAADAIPFi5IBAAVoy4PLIAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAABRAAAAUQAAAABhzdHRzAAAAAAAAAAEAAAABAABAAAAAABxzdHNjAAAAAAAAAAEAAAABAAAAAQAAAAEAAAAUc3RzegAAAAAAAAKIAAAAAQAAABRzdGNvAAAAAAAAAAEAAAM/AAAAYnVkdGEAAABabWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAtaWxzdAAAACWpdG9vAAAAHWRhdGEAAAABAAAAAExhdmY2MC4xNi4xMDAAAAAIZnJlZQAAApBtZGF0AAACcAYF//9s3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE2NCByMzEwOCAzMWUxOWY5IC0gSC4yNjQvTVBFRy00IEFWQyBjb2RlYyAtIENvcHlsZWZ0IDIwMDMtMjAyMyAtIGh0dHA6Ly93d3cudmlkZW9sYW4ub3JnL3gyNjQuaHRtbCAtIG9wdGlvbnM6IGNhYmFjPTAgcmVmPTMgZGVibG9jaz0xOjA6MCBhbmFseXNlPTB4MToweDExMSBtZT1oZXggc3VibWU9NyBwc3k9MSBwc3lfcmQ9MS4wMDowLjAwIG1peGVkX3JlZj0xIG1lX3JhbmdlPTE2IGNocm9tYV9tZT0xIHRyZWxsaXM9MSA4eDhkY3Q9MCBjcW09MCBkZWFkem9uZT0yMSwxMSBmYXN0X3Bza2lwPTEgY2hyb21hX3FwX29mZnNldD0tMiB0aHJlYWRzPTEgbG9va2FoZWFkX3RocmVhZHM9MSBzbGljZWRfdGhyZWFkcz0wIG5yPTAgZGVjaW1hdGU9MSBpbnRlcmxhY2VkPTAgYmx1cmF5X2NvbXBhdD0wIGNvbnN0cmFpbmVkX2ludHJhPTAgYmZyYW1lcz0wIHdlaWdodHA9MCBrZXlpbnQ9MjUwIGtleWludF9taW49MSBzY2VuZWN1dD00MCBpbnRyYV9yZWZyZXNoPTAgcmNfbG9va2FoZWFkPTQwIHJjPWNyZiBtYnRyZWU9MSBjcmY9MjMuMCBxY29tcD0wLjYwIHFwbWluPTAgcXBtYXg9NjkgcXBzdGVwPTQgaXBfcmF0aW89MS40MCBhcT0xOjEuMDAAgAAAABBliIQFf///D0UAAULfJ114" type="video/mp4">';
+      document.body.appendChild(v);
+      this.video = v;
+      safePlay(v);
+      this.method = 'video';
+    } catch (e) {
+      this.method = 'none';
+    }
+  },
+
+  _stopVideo() {
+    if (this.video) {
+      try { this.video.pause(); } catch (e) {}
+    }
+  },
+
+  /* Is the screen actually being held awake right now? */
+  isHeld() {
+    if (this.sentinel) return true;
+    if (this.video && !this.video.paused) return true;
+    return false;
+  }
+};
+
+// Backwards-compatible helpers used elsewhere in the app.
+function requestWakeLock() { WakeLock.enable(); }
+function releaseWakeLock() { WakeLock.disable(); }
 
 /* ================= GPS ================= */
 let gpsWatchId = null;
@@ -623,96 +741,201 @@ function updateDistanceDisplay() {
   document.getElementById('run-distance').innerHTML = `${icon('stat_distance',15)} ${fmtDistance(sessionDistanceMeters)} explored`;
 }
 
-/* ================= RUN ENGINE ================= */
+/* ================= RUN ENGINE =================
+   The engine holds ONE piece of truth: when the quest started (plus how long
+   it has been paused). Everything else — which phase we're in, how much is
+   left, overall progress — is derived from the clock on each tick.
+
+   This matters because phone screens lock. Browsers throttle or suspend
+   timers in a backgrounded tab, so anything that advances state
+   incrementally ("this phase ends 90s from now") quietly loses whatever time
+   passed while the screen was off. Deriving from elapsed time instead means
+   a locked screen costs nothing: come back and the run is exactly where it
+   should be.
+   ============================================================ */
+const ACTIVE_RUN_KEY = STORAGE_PREFIX + 'active_run';
+const RESUME_MAX_AGE_MS = 6 * 60 * 60 * 1000;   // ignore anything older than 6h
+const RESUME_OVERRUN_GRACE_MS = 15 * 60 * 1000; // finished long ago = abandoned
+
 const RunEngine = {
   active: false,
   quest: null,
-  phaseIndex: 0,
-  phaseEndAt: 0,
-  pausedRemainingMs: null,
   paused: false,
+  startedAt: 0,
+  pausedTotalMs: 0,
+  pauseStartedAt: null,
+  phaseIndex: 0,
+  headsUpPhase: -1,
   intervalId: null,
-  elapsedBeforePhase: 0,
-  headsUpPlayed: false,
+  _lastPersistAt: 0,
 
-  start(quest) {
+  start(quest, restore) {
     this.active = true;
     this.quest = quest;
-    this.startedAt = Date.now();
-    this.pausedTotalMs = 0;
-    this.pauseStartedAt = null;
-    this.phaseIndex = 0;
-    this.elapsedBeforePhase = 0;
-    this.paused = false;
+    this.headsUpPhase = -1;
+    this._lastPersistAt = 0;
+
+    if (restore) {
+      this.startedAt = restore.startedAt;
+      this.pausedTotalMs = restore.pausedTotalMs || 0;
+      this.paused = !!restore.paused;
+      this.pauseStartedAt = restore.pauseStartedAt || null;
+      sessionRoute = (restore.route || []).slice();
+      sessionDistanceMeters = restore.distanceM || 0;
+      lastGpsPos = null;
+    } else {
+      this.startedAt = Date.now();
+      this.pausedTotalMs = 0;
+      this.pauseStartedAt = null;
+      this.paused = false;
+      sessionRoute = [];
+      sessionDistanceMeters = 0;
+      lastGpsPos = null;
+    }
+
+    this.phaseIndex = this._positionAt(this._elapsedMs()).index;
+
     document.getElementById('run-quest-title').textContent = `${quest.region} — ${quest.title}`;
     document.getElementById('run-route-wrap').classList.add('hidden');
     showScreen('run');
-    this._beginPhase();
-    if (App.save.settings.gpsEnabled) startGpsTracking();
-    requestWakeLock();
+
+    if (App.save.settings.gpsEnabled) {
+      startGpsTracking();
+      if (sessionRoute.length > 1) drawLiveRoute();
+    }
+    WakeLock.enable().then(updateWakeIndicator);
     this.intervalId = setInterval(() => this.tick(), 250);
-    this._setPauseButton(false);
+    this._setPauseButton(this.paused);
+    this._persist();
     this.render();
   },
-  _beginPhase() {
-    const phase = this.quest.phases[this.phaseIndex];
-    this.phaseEndAt = Date.now() + phase.duration * 1000;
-    this.headsUpPlayed = false;
-    if (this.phaseIndex > 0) this._cueForPhase(phase);
+
+  /* Active running time: real time minus any time spent paused. */
+  _elapsedMs() {
+    const pausedNow = (this.paused && this.pauseStartedAt) ? Date.now() - this.pauseStartedAt : 0;
+    return Math.max(0, Date.now() - this.startedAt - this.pausedTotalMs - pausedNow);
   },
+
+  /* Which phase does this elapsed time land in, and how far through it? */
+  _positionAt(elapsedMs) {
+    const phases = this.quest.phases;
+    let acc = 0;
+    for (let i = 0; i < phases.length; i++) {
+      const d = phases[i].duration * 1000;
+      if (elapsedMs < acc + d) {
+        return { index: i, remainingMs: acc + d - elapsedMs, elapsedMs, done: false };
+      }
+      acc += d;
+    }
+    return { index: phases.length - 1, remainingMs: 0, elapsedMs, done: true };
+  },
+
   _cueForPhase(phase) {
     if (phase.type === 'run') { playRunCue(); vibrate([150, 80, 150, 80, 150]); }
     else if (phase.type === 'walk') { playWalkCue(); vibrate([400]); }
     else { beep(494, 0, 0.4, 0.25); vibrate([250]); }
   },
+
   tick() {
     if (this.paused || !this.active) return;
-    const phase = this.quest.phases[this.phaseIndex];
-    const remainingMs = this.phaseEndAt - Date.now();
-    const remainingSec = Math.max(0, remainingMs / 1000);
-    const isLastPhase = this.phaseIndex >= this.quest.phases.length - 1;
-    if (remainingSec <= 5 && remainingSec > 0.3 && !this.headsUpPlayed && !isLastPhase) {
-      this.headsUpPlayed = true; playHeadsUpCue(); vibrate(60);
+    const pos = this._positionAt(this._elapsedMs());
+
+    if (pos.done) { this.complete(); return; }
+
+    if (pos.index !== this.phaseIndex) {
+      const advancedBy = pos.index - this.phaseIndex;
+      this.phaseIndex = pos.index;
+      this.headsUpPhase = -1;
+      // Only cue a normal one-step transition. Jumping several phases means the
+      // app was backgrounded, and firing a "RUN!" cue for a phase that already
+      // started minutes ago would be worse than saying nothing.
+      if (advancedBy === 1) this._cueForPhase(this.quest.phases[pos.index]);
     }
-    if (remainingMs <= 0) {
-      this.elapsedBeforePhase += phase.duration;
-      this.phaseIndex++;
-      if (this.phaseIndex >= this.quest.phases.length) { this.complete(); return; }
-      this._beginPhase();
+
+    const remainingSec = pos.remainingMs / 1000;
+    const isLastPhase = pos.index >= this.quest.phases.length - 1;
+    if (remainingSec <= 5 && remainingSec > 0.3 && this.headsUpPhase !== pos.index && !isLastPhase) {
+      this.headsUpPhase = pos.index;
+      playHeadsUpCue();
+      vibrate(60);
     }
+
     this.render();
+    this._maybePersist();
+    if (!this._wakeCheckAt || Date.now() - this._wakeCheckAt > 10000) {
+      this._wakeCheckAt = Date.now();
+      if (this.wanted !== false) updateWakeIndicator();
+    }
   },
+
   render() {
     if (!this.active) return;
-    const phase = this.quest.phases[this.phaseIndex];
-    const remainingSec = Math.max(0, (this.phaseEndAt - Date.now()) / 1000);
+    const pos = this._positionAt(this._elapsedMs());
+    const phase = this.quest.phases[pos.index];
     const screenEl = document.getElementById('screen-run');
     screenEl.className = 'timer-screen phase-' + phase.type;
     document.getElementById('run-phase-label').textContent = PHASE_LABELS[phase.type];
-    document.getElementById('run-clock').textContent = fmtTime(remainingSec);
-    const nextPhase = this.quest.phases[this.phaseIndex + 1];
-    document.getElementById('run-nextup').textContent = nextPhase ? `Then: ${PHASE_LABELS[nextPhase.type]}` : 'Final stretch!';
-    const overallElapsed = this.elapsedBeforePhase + (phase.duration - remainingSec);
-    document.getElementById('run-overall-fill').style.width = Math.min(100, (overallElapsed / this.quest.totalSeconds) * 100) + '%';
+    document.getElementById('run-clock').textContent = fmtTime(pos.remainingMs / 1000);
+    const nextPhase = this.quest.phases[pos.index + 1];
+    document.getElementById('run-nextup').textContent =
+      nextPhase ? `Then: ${PHASE_LABELS[nextPhase.type]}` : 'Final stretch!';
+    const overallElapsed = Math.min(pos.elapsedMs / 1000, this.quest.totalSeconds);
+    document.getElementById('run-overall-fill').style.width =
+      Math.min(100, (overallElapsed / this.quest.totalSeconds) * 100) + '%';
     document.getElementById('run-elapsed').textContent =
       `${fmtTime(overallElapsed)} of ${fmtTime(this.quest.totalSeconds)}`;
   },
+
+  /* ---- crash / discard recovery ----
+     Android will happily throw away a backgrounded page when the screen
+     locks. Keeping a snapshot on disk means that costs the run nothing. */
+  _persist() {
+    if (!this.active || !App.profileId) return;
+    try {
+      localStorage.setItem(ACTIVE_RUN_KEY, JSON.stringify({
+        profileId: App.profileId,
+        questId: this.quest.id,
+        startedAt: this.startedAt,
+        pausedTotalMs: this.pausedTotalMs,
+        paused: this.paused,
+        pauseStartedAt: this.pauseStartedAt,
+        distanceM: sessionDistanceMeters,
+        route: compactRoute(simplifyRoute(sessionRoute, 300)),
+        savedAt: Date.now()
+      }));
+    } catch (e) { /* storage full or unavailable — the run still works */ }
+  },
+  _maybePersist() {
+    const now = Date.now();
+    if (now - this._lastPersistAt > 5000) {
+      this._lastPersistAt = now;
+      this._persist();
+    }
+  },
+  _clearPersisted() {
+    try { localStorage.removeItem(ACTIVE_RUN_KEY); } catch (e) {}
+  },
+
   pause() {
     if (this.paused || !this.active) return;
     this.paused = true;
     this.pauseStartedAt = Date.now();
-    this.pausedRemainingMs = this.phaseEndAt - Date.now();
     clearInterval(this.intervalId);
     this._setPauseButton(true);
+    this._persist();
   },
   resume() {
     if (!this.paused) return;
     this.paused = false;
-    if (this.pauseStartedAt) { this.pausedTotalMs += Date.now() - this.pauseStartedAt; this.pauseStartedAt = null; }
-    this.phaseEndAt = Date.now() + this.pausedRemainingMs;
+    if (this.pauseStartedAt) {
+      this.pausedTotalMs += Date.now() - this.pauseStartedAt;
+      this.pauseStartedAt = null;
+    }
     this.intervalId = setInterval(() => this.tick(), 250);
     this._setPauseButton(false);
-    requestWakeLock();
+    WakeLock.enable();
+    this._persist();
+    this.render();
   },
   _setPauseButton(isPaused) {
     document.getElementById('btn-pause-run').innerHTML = isPaused
@@ -724,6 +947,7 @@ const RunEngine = {
     clearInterval(this.intervalId);
     stopGpsTracking();
     releaseWakeLock();
+    this._clearPersisted();
   },
   endEarly() {
     this._stopAll();
@@ -786,6 +1010,69 @@ const RunEngine = {
     showQuestCompleteModal(quest, rewards, leveledUp, afterLevel, distanceThisRun, beaconText, prs, record);
   }
 };
+/* ---- resuming a run that was interrupted ---- */
+function loadActiveRun() {
+  try { return JSON.parse(localStorage.getItem(ACTIVE_RUN_KEY)); }
+  catch (e) { return null; }
+}
+function discardActiveRun() {
+  try { localStorage.removeItem(ACTIVE_RUN_KEY); } catch (e) {}
+}
+function offerRunResume() {
+  const saved = loadActiveRun();
+  if (!saved || saved.profileId !== App.profileId) return false;
+  const quest = QUESTS.find(q => q.id === saved.questId);
+  if (!quest) { discardActiveRun(); return false; }
+
+  const age = Date.now() - (saved.savedAt || saved.startedAt || 0);
+  if (age > RESUME_MAX_AGE_MS) { discardActiveRun(); return false; }
+
+  const pausedNow = (saved.paused && saved.pauseStartedAt) ? Date.now() - saved.pauseStartedAt : 0;
+  const elapsedMs = Date.now() - saved.startedAt - (saved.pausedTotalMs || 0) - pausedNow;
+  // Finished ages ago with nobody watching: treat as abandoned rather than
+  // silently awarding a quest nobody actually ran.
+  if (elapsedMs > quest.totalSeconds * 1000 + RESUME_OVERRUN_GRACE_MS) {
+    discardActiveRun();
+    return false;
+  }
+
+  const doneSec = Math.min(Math.round(elapsedMs / 1000), quest.totalSeconds);
+  showModal(`
+    <div class="modal-title">Pick up where you left off?</div>
+    <div class="modal-sub">${escapeHtml(quest.title)}</div>
+    <p class="t-small mt-8">You were ${fmtTime(doneSec)} into this quest when the app closed.</p>
+    <div class="flex gap-8 mt-16">
+      <button class="btn btn-outline grow" id="modal-discard-run">Start Over</button>
+      <button class="btn btn-primary grow" id="modal-resume-run">Resume</button>
+    </div>
+  `, () => {
+    document.getElementById('modal-discard-run').addEventListener('click', () => {
+      closeModal();
+      discardActiveRun();
+    });
+    document.getElementById('modal-resume-run').addEventListener('click', () => {
+      closeModal();
+      RunEngine.start(quest, saved);
+    });
+  });
+  return true;
+}
+
+/* Save a snapshot the moment we're backgrounded — this is the instant before
+   a screen lock, and the last chance to write anything down. */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    if (RunEngine.active) RunEngine._persist();
+  } else if (RunEngine.active) {
+    // Coming back into view: the OS will have dropped any wake lock while we
+    // were hidden, so take it again, then resync the clock.
+    WakeLock.enable();
+    RunEngine.tick();
+    updateWakeIndicator();
+  }
+});
+window.addEventListener('pagehide', () => { if (RunEngine.active) RunEngine._persist(); });
+
 document.getElementById('btn-pause-run').addEventListener('click', () => {
   if (RunEngine.paused) RunEngine.resume(); else RunEngine.pause();
 });
@@ -1041,6 +1328,33 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => showScreen(btn.dataset.screen));
 });
 
+/* The nav bar's real height varies with the device's font-size setting and
+   its gesture-bar inset, so a hardcoded gap was always going to be wrong on
+   some phones. Measure it instead. */
+/* Tell the runner plainly whether the screen will stay on, rather than
+   leaving them to discover mid-run that it won't. */
+function updateWakeIndicator() {
+  const el = document.getElementById('run-wake-status');
+  if (!el) return;
+  if (!RunEngine.active) { el.classList.add('hidden'); return; }
+  const held = WakeLock.isHeld();
+  el.classList.toggle('hidden', held);
+  if (!held) {
+    el.textContent = "Your screen may dim — that's fine, the quest keeps running.";
+  }
+}
+
+function syncNavSpace() {
+  const nav = document.getElementById('bottom-nav');
+  if (!nav) return;
+  const visible = !nav.classList.contains('hidden');
+  // offsetHeight already includes the nav's own safe-area padding
+  const h = visible ? nav.offsetHeight : 0;
+  document.documentElement.style.setProperty('--nav-space', (h + 24) + 'px');
+}
+window.addEventListener('resize', syncNavSpace);
+window.addEventListener('orientationchange', () => setTimeout(syncNavSpace, 150));
+
 /* ================= INIT ================= */
 function hydrateIcons(root) {
   (root || document).querySelectorAll('[data-icon]').forEach(el => {
@@ -1052,6 +1366,7 @@ function hydrateIcons(root) {
 
 function init() {
   hydrateIcons();
+  syncNavSpace();
   const idx = loadProfileIndex();
   if (idx.length === 0) {
     App.createConfig = { skinTone: SKIN_TONES[1], hairColor: HAIR_COLORS[0], hairStyle: 'short', gender: 'girl' };

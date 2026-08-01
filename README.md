@@ -78,6 +78,53 @@ A fifth tab, **Log**, keeps a record of every finished quest:
 Beating one of your top three is called out on the quest-complete screen right
 after the run, so it lands while it still feels earned.
 
+## Keeping the screen on during a run
+
+The app asks the phone to keep the screen awake for the whole quest, the same
+way a video does. Two mechanisms, whichever the phone supports:
+
+- The **Screen Wake Lock API** on anything modern (Chrome on Android, Safari
+  16.4+), which is the proper, battery-aware way to do it.
+- A **muted looping video**, 32x32 pixels and about 1.5KB, playing invisibly
+  off-screen. Phones won't sleep while video is playing. This covers older
+  handsets that predate the API, and is embedded in the app itself so it works
+  offline.
+
+The subtle part is holding onto it. The operating system takes the wake lock
+away whenever the app isn't in front — pulling down the notification shade,
+an incoming call, switching apps — and doesn't hand it back by itself. The app
+therefore watches for that and takes it again on return. Without this the
+screen quietly starts sleeping partway through a run.
+
+The screen also stays awake while the run is **paused**, since someone stood
+there waiting to press Resume shouldn't have to keep waking the phone up.
+
+If the phone refuses (very old browser, battery saver mode), a small note
+appears on the run screen saying the screen may dim and that the quest keeps
+running regardless. The run is never dependent on the screen being on.
+
+## If the phone locks mid-run
+
+Screen locks are normal on a run, so the app is built to survive them:
+
+- The timer works out where it is from the **clock**, not by counting ticks.
+  Phone screens suspend background timers, so anything counting ticks quietly
+  loses whatever time passed while the screen was off. Unlock after ten
+  minutes and the run is exactly ten minutes further on, in the right
+  interval.
+- Interval cues aren't replayed for intervals that already went by while the
+  screen was off — a "RUN!" prompt for a stretch that started six minutes ago
+  is worse than silence.
+- Android sometimes discards a backgrounded app outright. The run is
+  therefore **saved to the phone continuously**, and again the instant the app
+  is backgrounded. If it does get killed, reopening offers to pick up exactly
+  where it left off, distance and route included.
+- Time spent on **Pause** is excluded from the run, so a stop to tie a
+  shoelace doesn't count against them.
+- A saved run is only offered back if it's recent. One that's over six hours
+  old, or that would have finished more than fifteen minutes ago with nobody
+  watching, is treated as abandoned and quietly dropped rather than awarded.
+
 ## Route recording
 
 With GPS switched on, the app records the shape of the route and draws it live

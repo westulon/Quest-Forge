@@ -2,7 +2,7 @@
    Cache-first for the app shell so the whole game works with no signal
    mid-run. Bump CACHE_NAME whenever shipping an update to bust old caches. */
 
-const CACHE_NAME = 'quest-forge-v5';
+const CACHE_NAME = 'quest-forge-v7';
 const CORE_ASSETS = [
   './',
   './index.html',

@@ -105,7 +105,8 @@ body.bg-stars   { --bg-pattern: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0ia
   position: relative;
   display: flex;
   flex-direction: column;
-  padding-bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+  /* set at runtime by syncNavSpace(); the fallback covers the moment before JS runs */
+  padding-bottom: var(--nav-space, calc(120px + env(safe-area-inset-bottom, 0px)));
 }
 
 /* ============================================================
@@ -555,6 +556,24 @@ input[type="text"], input[type="number"] {
   max-width: 320px;
 }
 .btn-pause:active { box-shadow: 0 1px 0 rgba(0,0,0,0.25); }
+
+/* The wake-lock fallback video: present but invisible and inert. Not
+   display:none — a hidden video won't play, which would defeat the point. */
+.nosleep-video {
+  position: fixed;
+  width: 1px; height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  top: 0; left: 0;
+  z-index: -1;
+}
+.run-wake-status {
+  font-size: var(--fs-micro);
+  color: rgba(242,230,201,0.7);
+  max-width: 300px;
+  margin-bottom: var(--sp-1);
+  line-height: 1.4;
+}
 
 /* ============================================================
    RUN LOG
