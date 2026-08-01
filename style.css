@@ -575,6 +575,56 @@ input[type="text"], input[type="number"] {
   line-height: 1.4;
 }
 
+/* horizontal interval strip on the run screen */
+.run-intervals {
+  list-style: none; margin: 0; padding: 0 0 var(--sp-1);
+  display: flex; gap: 6px;
+  width: 100%; max-width: 340px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.run-intervals::-webkit-scrollbar { display: none; }
+.ivl {
+  flex: none;
+  min-width: 60px;
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  text-align: center;
+  background: rgba(0,0,0,0.22);
+  border: 1px solid rgba(242,230,201,0.18);
+  color: rgba(242,230,201,0.8);
+}
+.ivl-label {
+  display: block;
+  font-family: var(--font-display); font-weight: 700;
+  font-size: 10px; letter-spacing: 0.8px; text-transform: uppercase;
+}
+.ivl-time { display: block; font-size: var(--fs-small); font-weight: 800; font-variant-numeric: tabular-nums; }
+.ivl--done { background: rgba(0,0,0,0.3); color: rgba(242,230,201,0.42); }
+.ivl--current {
+  background: var(--parchment); color: var(--ink);
+  border-color: var(--parchment);
+  box-shadow: 0 0 0 3px rgba(242,230,201,0.22);
+}
+.ivl--upcoming.ivl--run { border-color: rgba(242,230,201,0.32); }
+
+/* quest briefing */
+.briefing-list { list-style: none; margin: 0; padding: 0; text-align: left; }
+.briefing-item {
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  font-size: var(--fs-small);
+  font-weight: 700;
+  background: rgba(28,43,33,0.06);
+  color: var(--ink-text);
+  border-left: 4px solid rgba(28,43,33,0.2);
+}
+.briefing-item--warmup, .briefing-item--cooldown { border-left-color: var(--moss); }
+.briefing-item--cycle { border-left-color: var(--gold); }
+.briefing-item--run { border-left-color: var(--ember); }
+.briefing-item--walk { border-left-color: var(--teal); }
+
 /* ============================================================
    RUN LOG
    ============================================================ */

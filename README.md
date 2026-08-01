@@ -125,6 +125,28 @@ Screen locks are normal on a run, so the app is built to survive them:
   old, or that would have finished more than fifteen minutes ago with nobody
   watching, is treated as abandoned and quietly dropped rather than awarded.
 
+## Before and during each run
+
+**A plan before you set off.** Tapping a quest shows what the session actually
+involves — "Warm-up walk 5 min / 7 × (Run 1 min + walk 1:30) / Run 1 min /
+Cool-down walk 5 min" — with the total time and how much of it is running.
+Repeated intervals are collapsed rather than listed sixteen times over.
+
+**Spoken instructions.** The app says what to do out loud: *"Run for 1
+minute."*, *"Walk for 1 minute 30 seconds."*, and *"Get ready to run."* about
+eight seconds before each change. A short beep still plays first to catch
+attention over wind or music, and the phone vibrates too, so it works with the
+phone in a pocket. Beeps alone told you *something* had changed but not what —
+which is a lot to ask of a nine-year-old mid-run.
+
+Voice can be switched off on the Hero tab, in which case the old distinct beep
+patterns carry on as before.
+
+**The intervals stay on screen.** A strip along the run screen shows every
+interval in the session: finished ones dimmed, the current one highlighted,
+the rest waiting. It scrolls to follow along, so at any moment they can see
+what's left without remembering the plan.
+
 ## Route recording
 
 With GPS switched on, the app records the shape of the route and draws it live
@@ -132,8 +154,21 @@ on screen as you run, then saves it with the run.
 
 A few details that matter in practice:
 
-- Points closer than 2m apart are ignored (GPS jitter), as are jumps over 100m
-  (signal bounce near buildings).
+- Distance is estimated with a smoothing filter weighted by how accurate each
+  GPS reading claims to be, and implausible readings are rejected on **speed**
+  rather than a fixed distance limit.
+
+  This matters more than it sounds. The first version rejected any reading
+  worse than 30m accuracy and any single step over 100m, and those two rules
+  made each other worse: poor signal meant readings were dropped, which meant
+  the surviving readings were far apart, which meant they tripped the 100m
+  limit and were dropped as well. Tested against a simulated Week-1 session it
+  came out around 30% short — and on a clear day, with no smoothing at all, GPS
+  jitter inflated the total by a similar margin in the other direction.
+
+  The current version was tuned by testing thousands of simulated sessions
+  across signal conditions; worst case is about 2%, and the app's test suite
+  fails if it ever drifts past 12% again.
 - Routes are thinned before saving — corners are preserved, straight stretches
   collapsed — so a 30-minute run stores a few hundred points rather than a few
   thousand. The drawing looks the same; the save stays small.

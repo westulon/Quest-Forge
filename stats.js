@@ -251,3 +251,80 @@ function summarise(runHistory) {
     runSec: runs.reduce((a, r) => a + (r.runSec || 0), 0)
   };
 }
+
+/* ============================================================
+   Interval summaries — describing a session in plain language
+   ============================================================ */
+
+function spokenDuration(sec) {
+  if (sec % 60 === 0) {
+    const m = sec / 60;
+    return m === 1 ? '1 minute' : m + ' minutes';
+  }
+  if (sec < 60) return sec + ' seconds';
+  const m = Math.floor(sec / 60), r = sec % 60;
+  return (m === 1 ? '1 minute ' : m + ' minutes ') + r + ' seconds';
+}
+
+function shortDuration(sec) {
+  if (sec % 60 === 0) return (sec / 60) + ' min';
+  if (sec < 60) return sec + ' sec';
+  return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+}
+
+/**
+ * Turn a phase list into a few readable blocks, collapsing the repetition
+ * that makes C25K sessions look daunting written out in full.
+ * "Run 1 min, walk 90 sec" repeated eight times reads far better than
+ * sixteen separate lines.
+ */
+function summariseIntervals(phases) {
+  const core = phases.filter(p => p.type === 'run' || p.type === 'walk');
+  const warmup = phases.find(p => p.type === 'warmup');
+  const cooldown = phases.find(p => p.type === 'cooldown');
+  const out = [];
+  if (warmup) out.push({ kind: 'warmup', text: `Warm-up walk, ${shortDuration(warmup.duration)}` });
+
+  // Collapse an alternating run/walk cycle into "N ×" when it repeats.
+  let i = 0;
+  while (i < core.length) {
+    const a = core[i], b = core[i + 1];
+    if (b && a.type !== b.type) {
+      let reps = 0;
+      while (
+        core[i + reps * 2] && core[i + reps * 2 + 1] &&
+        core[i + reps * 2].type === a.type && core[i + reps * 2].duration === a.duration &&
+        core[i + reps * 2 + 1].type === b.type && core[i + reps * 2 + 1].duration === b.duration
+      ) reps++;
+      if (reps >= 2) {
+        out.push({
+          kind: 'cycle', reps,
+          text: `${reps} × (${a.type === 'run' ? 'Run' : 'Walk'} ${shortDuration(a.duration)}` +
+                ` + ${b.type === 'run' ? 'run' : 'walk'} ${shortDuration(b.duration)})`
+        });
+        i += reps * 2;
+        continue;
+      }
+    }
+    out.push({
+      kind: a.type,
+      text: `${a.type === 'run' ? 'Run' : 'Walk'} ${shortDuration(a.duration)}`
+    });
+    i++;
+  }
+
+  if (cooldown) out.push({ kind: 'cooldown', text: `Cool-down walk, ${shortDuration(cooldown.duration)}` });
+  return out;
+}
+
+/** The phases still to come, for the on-screen list during a run. */
+function remainingIntervals(phases, currentIndex) {
+  return phases.map((p, i) => ({
+    index: i,
+    type: p.type,
+    duration: p.duration,
+    label: p.type === 'warmup' ? 'Warm-up' : p.type === 'cooldown' ? 'Cool-down' : (p.type === 'run' ? 'Run' : 'Walk'),
+    short: shortDuration(p.duration),
+    state: i < currentIndex ? 'done' : (i === currentIndex ? 'current' : 'upcoming')
+  }));
+}

@@ -162,6 +162,9 @@
           <span class="ico-inline" data-icon="ui_sound"></span> Test Run/Walk Cues
         </button>
         <label class="check-row">
+          <input type="checkbox" id="chk-voice"> Speak the intervals out loud
+        </label>
+        <label class="check-row">
           <input type="checkbox" id="chk-gps"> Track distance and route with GPS
         </label>
         <p class="field-label mt-8">Background Theme</p>
@@ -190,6 +193,8 @@
       <p class="timer-clock" id="run-clock">5:00</p>
       <p class="timer-sub" id="run-nextup">Then: Run</p>
     </div>
+
+    <ul class="run-intervals" id="run-intervals"></ul>
 
     <div class="run-route hidden" id="run-route-wrap">
       <svg class="route-svg" id="run-route-svg" viewBox="0 0 240 130" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
